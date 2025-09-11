@@ -43,6 +43,31 @@ class Rele {
     }
 };
 
+class RFID {
+  public:
+    int codigo;
+    int pinComm1;
+    int pinComm2;
+
+    //construtor
+    RFID(){
+      codigo = 0;
+      pinComm1 = 0;
+      pinComm2 = 0;
+    }
+
+    void linkComm(int p1, int p2){
+      pinComm1 = p1;
+      pinComm2 = p2;
+    }
+
+    int ReadCode(){
+      codigo = 0; //Substituir depois *********************************
+      return codigo;
+    }
+
+};
+
 // Objetos globais
 Sensor sensor;
 Rele ventilador;
