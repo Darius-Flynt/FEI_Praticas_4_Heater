@@ -1,0 +1,46 @@
+<!DOCTYPE html><html>
+    <head><meta charset='UTF-8'><title>ESP32 Web Server</title></head>
+
+    <body style='text-align:center; font-family:Arial; background-color:rgb(17, 72, 91); color: rgb(225, 224, 224);'>
+        <h1 style="color: azure;">Heat Cooler</h1>
+        <p><b>Usuario Atual:</b> FABIANO</p>
+        <p><br><b>Temperatura Ambiente:</b> 28,5</p>
+        <p><b>Temperatura SetPoint:</b> 23,0</p>
+        
+        <span style="margin-right:20px;"><br><b>Status Cooler FAN:</b> <span style="color: chartreuse;">LIGADO</span></span>
+        <span><b>Status Heat Lamp:</b> <span style="color: rgb(244, 1, 1);">DESLIGADO</span><br><br></span>
+
+        <div style="width: 25%; margin: auto; text-align: left;">
+            <div style="background-color: azure; color: rgb(44, 44, 44); padding: 5px; text-align: center;">
+                <h2>Tipo de Controle</h2>
+            </div>
+            <div style="background-color: rgb(161, 161, 161);">
+                <div>
+                    <a href='/ligar'><button>Automatico</button></a>
+                    <form action="/setpoint" method="GET">
+                    <label for="sp">Setpoint:</label>
+                    <input type="number" id="sp" name="value" value="25">
+                    <input type="submit" value="Enviar">
+                </form>
+                </div>
+                <div style="margin-top: 5px;">
+                    <a href='/desligar'><button>Manual</button></a>
+                    <div>
+                        <a href='/desligar'><button>Liga FAN</button></a>
+                        <a href='/desligar'><button>Desliga FAN</button></a>
+                        <a href='/desligar'><button>Liga HEAT</button></a>
+                        <a href='/desligar'><button>Desliga HEAT</button></a>
+
+                    </div>
+                </div>
+                
+                
+                <p><br></p>
+
+                
+            </div>
+            
+        </div>
+        
+    </body>
+</html>
