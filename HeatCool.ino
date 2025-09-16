@@ -80,6 +80,8 @@ Rele lampada;
 
 float extTemp = 0;
 float Setpoint = 500; // valor inicial de referência
+float histerese;
+int Modo; //0 = Manual, 1 = Automatico, 2 = democratico
 
 // =====================
 // Wi-Fi + WebServer
@@ -114,6 +116,9 @@ void setup() {
   sensor.LinkIO(A0);
   ventilador.LinkIO(2);
   lampada.LinkIO(4);
+
+  //SETA HISTERESE PADRÃO:
+  histerese = 2;
 
   // Conecta no Wi-Fi
   WiFi.begin(ssid, password);
@@ -161,19 +166,18 @@ void loop() {
   server.handleClient();
 
   extTemp = sensor.Leitura();
-  /*
-  if (Setpoint < extTemp) {
-    ventilador.Comando(true);
-    lampada.Comando(false);
+  
+   // logica de controle com janela de histerese
+  // se esta abaixo do minimo da janela de histerese
+  if (Modo == 1){
+    if (extTemp < (Setpoint - histerese)) {
+      lampada.Comando(true);  // liga a lampada
+    }
+    // se esta acima do maximo da janela deV histerese
+    if (extTemp > (Setpoint + histerese)) {
+      lampada.Comando(false);  // desliga a lampada
+    }
   }
-  else if (Setpoint > extTemp) {
-    ventilador.Comando(false);
-    lampada.Comando(true);
-  }
-  else {
-    ventilador.Comando(false);
-    lampada.Comando(false);
-  }
-  */
+  
 
 }
