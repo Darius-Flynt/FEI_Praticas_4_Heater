@@ -89,6 +89,27 @@ int Modo; //0 = Manual, 1 = Automatico, 2 = democratico
 const char* ssid = "A56 de João Vitor";
 const char* password = "leme1234";
 
+struct User {
+  int ID;
+	float Temperatura;
+	String Nome;
+	int RFID;
+};
+
+//Estrutura de dados comunicação Supervisório WEB SERVER
+struct  Supervisorio {
+  int presentUsers; //Numero de Usúarios presentes na sala
+  int operMode; //modo de operação (0 - manual, 1 - automatico, 2 - controle de acesso)
+  float setpoint; //setpoint definido para controle automatico
+  float temp; //setpoint definido para controle automatico
+  bool lampStatus; //status de ligado da lampada
+  bool fanStatus; //status de ligado do fan
+  User users[11];
+  int acessControl[11];
+  bool manualFanCMD;
+  bool manualCoolerCMD;
+};
+
 WebServer server(80);
 
 // rota principal
@@ -166,14 +187,24 @@ void loop() {
   server.handleClient();
 
   extTemp = sensor.Leitura();
-  
+
+  if (Modo == 0){
+    if (extTemp < (Setpoint - histerese)) {
+      lampada.Comando(true);  // liga a lampada
+    }
+    // se esta acima do maximo da janela de histerese
+    if (extTemp > (Setpoint + histerese)) {
+      lampada.Comando(false);  // desliga a lampada
+    }
+  }
+
    // logica de controle com janela de histerese
   // se esta abaixo do minimo da janela de histerese
   if (Modo == 1){
     if (extTemp < (Setpoint - histerese)) {
       lampada.Comando(true);  // liga a lampada
     }
-    // se esta acima do maximo da janela deV histerese
+    // se esta acima do maximo da janela de histerese
     if (extTemp > (Setpoint + histerese)) {
       lampada.Comando(false);  // desliga a lampada
     }
