@@ -1,26 +1,36 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#include <SPI.h>
+#include <MFRC522.h>
+#include "max6675.h"
 
 // =====================
 // Classes
 // =====================
 class Sensor {
+  private:
+    int pinSO;   // MISO
+    int pinCS;   // Chip Select
+    int pinSCK;  // Clock
+    MAX6675 thermocouple;
+
   public:
     float value;
-    int pino;
 
-    Sensor() {
-      value = 0;
-      pino = A0; // valor default
+    Sensor() : thermocouple(0, 0, 0) {
+      value = 0.0;
+      pinSO = pinCS = pinSCK = 0;
     }
 
-    void LinkIO(int pin){
-      pino = pin;
+    void LinkIO(int sck, int cs, int so) {
+      pinSCK = sck;
+      pinCS = cs;
+      pinSO = so;
+      thermocouple = MAX6675(pinSCK, pinCS, pinSO);
     }
 
-    float Leitura(){
-      int raw = analogRead(pino);  // leitura ADC
-      value = (float)raw;          // salva em value
+    float Leitura() {
+      value = thermocouple.readCelsius();
       return value;
     }
 };
@@ -48,27 +58,64 @@ class Rele {
 };
 
 class RFID {
+  private:
+    MFRC522 mfrc522;          // objeto da biblioteca
+    MFRC522::MIFARE_Key key;  // chave de comunicação (não usada aqui, mas pode ser útil)
+    byte readCard[4];         // UID do cartão
+    bool cardDetected;        // flag de leitura
+    int pinSS;                // pino de comunicação SS
+    int pinRST;               // pino de reset
+
   public:
-    int codigo;
-    int pinComm1;
-    int pinComm2;
-
-    RFID(){
-      codigo = 0;
-      pinComm1 = 0;
-      pinComm2 = 0;
+    // Construtor
+    RFID(int ssPin, int rstPin) : mfrc522(ssPin, rstPin) {
+      pinSS = ssPin;
+      pinRST = rstPin;
+      cardDetected = false;
     }
 
-    void linkComm(int p1, int p2){
-      pinComm1 = p1;
-      pinComm2 = p2;
+    // Inicializa o módulo
+    void begin() {
+      SPI.begin(18, 19, 23, pinSS);
+      mfrc522.PCD_Init();
+      Serial.println("RFID iniciado com sucesso.");
+      Serial.println("Aproxime o cartão...");
     }
 
-    int ReadCode(){
-      codigo = 0; // simulação
-      return codigo;
+    // Verifica e lê o cartão
+    bool readCardUID() {
+      // verifica se há novo cartão
+      if (!mfrc522.PICC_IsNewCardPresent()) {
+        return false;
+      }
+
+      // tenta ler o cartão
+      if (!mfrc522.PICC_ReadCardSerial()) {
+        return false;
+      }
+
+      Serial.print("Cartão detectado! UID: ");
+      for (byte i = 0; i < mfrc522.uid.size; i++) {
+        readCard[i] = mfrc522.uid.uidByte[i];
+        Serial.print(readCard[i], HEX);
+      }
+      Serial.println();
+      mfrc522.PICC_HaltA(); // encerra comunicação com o cartão
+      return true;
+    }
+
+    // Retorna o UID em formato inteiro (ou qualquer outro formato desejado)
+    unsigned long getCardCode() {
+      unsigned long code = 0;
+      for (int i = 0; i < 4; i++) {
+        code = (code << 8) | readCard[i];
+      }
+      return code;
     }
 };
+
+RFID leitor(21, 22);
+Sensor termopar;
 
 // =====================
 // Objetos globais
@@ -139,7 +186,6 @@ void setup() {
   Serial.begin(115200);
 
   // Inicializa sensores e atuadores
-  sensor.LinkIO(A0);
   ventilador.LinkIO(2);
   lampada.LinkIO(4);
 
@@ -216,6 +262,9 @@ void setup() {
   });
 
   server.begin();
+
+  leitor.begin();
+  termopar.LinkIO(18, 32, 19);
 }
 
 // =====================
@@ -254,4 +303,17 @@ void loop() {
       supervisorio.fanStatus = true;
     }
   }
+
+  if (leitor.readCardUID()) {
+    unsigned long codigo = leitor.getCardCode();
+    Serial.print("Código numérico: ");
+    Serial.println(codigo);
+    delay(1000); // pequena pausa
+  }
+
+  // --- Leitura do MAX6675 ---
+  float temp = termopar.Leitura();
+  Serial.print("Temperatura: ");
+  Serial.print(temp);
+  Serial.println(" °C");
 }
