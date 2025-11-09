@@ -1,198 +1,201 @@
+//===============================================================
+// RFID (MFRC522) + Sensor de Temperatura (MAX6675) - ESP32
+//===============================================================
+#include <SPI.h>
+#include <MFRC522v2.h>
+#include <MFRC522DriverSPI.h>
+#include <MFRC522DriverPinSimple.h>
+#include <max6675.h>
+
+//WEBSERVER
 #include <WiFi.h>
 #include <WebServer.h>
-#include <SPI.h>
-#include <MFRC522.h>
-#include "max6675.h"
 
-// =====================
-// Classes
-// =====================
-class Sensor {
-  private:
-    int pinSO;   // MISO
-    int pinCS;   // Chip Select
-    int pinSCK;  // Clock
-    MAX6675 thermocouple;
-
-  public:
-    float value;
-
-    Sensor() : thermocouple(0, 0, 0) {
-      value = 0.0;
-      pinSO = pinCS = pinSCK = 0;
-    }
-
-    void LinkIO(int sck, int cs, int so) {
-      pinSCK = sck;
-      pinCS = cs;
-      pinSO = so;
-      thermocouple = MAX6675(pinSCK, pinCS, pinSO);
-    }
-
-    float Leitura() {
-      value = thermocouple.readCelsius();
-      return value;
-    }
-};
-
-class Rele {
-  public:
-    bool estado;
-    int pino;
-
-    Rele(){
-      estado = false;
-      pino = 0;
-    }
-
-    void LinkIO(int pin){
-      pino = pin;
-      pinMode(pino, OUTPUT);
-      digitalWrite(pino, LOW);
-    }
-
-    void Comando(bool cmd){
-      estado = cmd;
-      digitalWrite(pino, estado ? HIGH : LOW);
-    }
-};
-
-class RFID {
-  private:
-    MFRC522 mfrc522;          // objeto da biblioteca
-    MFRC522::MIFARE_Key key;  // chave de comunicação (não usada aqui, mas pode ser útil)
-    byte readCard[4];         // UID do cartão
-    bool cardDetected;        // flag de leitura
-    int pinSS;                // pino de comunicação SS
-    int pinRST;               // pino de reset
-
-  public:
-    // Construtor
-    RFID(int ssPin, int rstPin) : mfrc522(ssPin, rstPin) {
-      pinSS = ssPin;
-      pinRST = rstPin;
-      cardDetected = false;
-    }
-
-    // Inicializa o módulo
-    void begin() {
-      SPI.begin(18, 19, 23, pinSS);
-      mfrc522.PCD_Init();
-      Serial.println("RFID iniciado com sucesso.");
-      Serial.println("Aproxime o cartão...");
-    }
-
-    // Verifica e lê o cartão
-    bool readCardUID() {
-      // verifica se há novo cartão
-      if (!mfrc522.PICC_IsNewCardPresent()) {
-        return false;
-      }
-
-      // tenta ler o cartão
-      if (!mfrc522.PICC_ReadCardSerial()) {
-        return false;
-      }
-
-      Serial.print("Cartão detectado! UID: ");
-      for (byte i = 0; i < mfrc522.uid.size; i++) {
-        readCard[i] = mfrc522.uid.uidByte[i];
-        Serial.print(readCard[i], HEX);
-      }
-      Serial.println();
-      mfrc522.PICC_HaltA(); // encerra comunicação com o cartão
-      return true;
-    }
-
-    // Retorna o UID em formato inteiro (ou qualquer outro formato desejado)
-    unsigned long getCardCode() {
-      unsigned long code = 0;
-      for (int i = 0; i < 4; i++) {
-        code = (code << 8) | readCard[i];
-      }
-      return code;
-    }
-};
-
-RFID leitor(21, 22);
-Sensor termopar;
-
-// =====================
-// Objetos globais
-// =====================
-Sensor sensor;
-Rele ventilador;
-Rele lampada;
-
-float extTemp = 0;
-float Setpoint = 20; // valor inicial de referência
-float histerese;
-int Modo; //0 = Manual, 1 = Automatico, 2 = democratico
-
+//Estrutura de dados comunicação Supervisório WEB SERVER
 struct User {
   int ID;
   float Temperatura;
   String Nome;
   int RFID;
+  String UID; 
+  bool presente; 
 };
 
-//Estrutura de dados comunicação Supervisório WEB SERVER
 struct Supervisorio {
-  int presentUsers; //Numero de Usúarios presentes na sala
-  int operMode; //modo de operação (0 - manual, 1 - automatico, 2 - controle de acesso)
-  float setpoint; //setpoint definido para controle automatico
-  float temp;     //temperatura atual
-  bool lampStatus; 
-  bool fanStatus; 
+  int presentUsers;
+  int operMode;
+  float setpoint;
+  float temp;
+  bool lampStatus;
+  bool fanStatus;
   User users[11];
   int acessControl[11];
   bool manualFanCMD;
   bool manualCoolerCMD;
-  int validUsers = 3;
+  int validUsers = 0;
 };
 
+const char* ssid = "A56 de João Vitor";
+const char* password = "leme1234";
+
+float extTemp = 0;
+float Setpoint = 20;
+float histerese;
+int Modo;
+
+WebServer server(80);
 Supervisorio supervisorio;
 
 #include "WebPage.h"
 
-// =====================
-// Wi-Fi + WebServer
-// =====================
-const char* ssid = "A56 de João Vitor";
-const char* password = "leme1234";
-
-WebServer server(80);
-
-// rota principal
 void handleRoot() {
   server.send(200, "text/html", htmlPage(supervisorio));
 }
 
-// rota para setpoint
 void handleSetpoint() {
   if (server.hasArg("value")) {
     Setpoint = server.arg("value").toFloat();
-    supervisorio.setpoint = Setpoint;   // atualiza struct
+    supervisorio.setpoint = Setpoint;
     Serial.print("Novo Setpoint: ");
     Serial.println(Setpoint);
   }
   server.send(200, "text/html", htmlPage(supervisorio));
 }
 
-// =====================
+
+
+// -----------------------------
+// Pinos RFID (SPI principal)
+// -----------------------------
+#define SS_PIN   21
+#define RST_PIN  2
+#define SCK_RFID 17
+#define MISO_RFID 4
+#define MOSI_RFID 16
+
+// -----------------------------
+// Pinos MAX6675 (SPI secundário)
+// -----------------------------
+#define SCK_MAX 23
+#define CS_MAX  19
+#define SO_MAX  18
+
+// -----------------------------
+// Objetos e variáveis
+// -----------------------------
+MFRC522DriverPinSimple ss_pin(SS_PIN);
+SPIClass &spiRFID = SPI;
+const SPISettings spiSettings = SPISettings(SPI_CLOCK_DIV4, MSBFIRST, SPI_MODE0);
+MFRC522DriverSPI driver{ss_pin, spiRFID, spiSettings};
+MFRC522 mfrc522{driver};
+
+MAX6675 thermocouple(SCK_MAX, CS_MAX, SO_MAX);
+
+int estado_sistema = LOW;
+unsigned long timer_rfid = 0;
+unsigned long timer_temp = 0;
+String read_rfid;
+
+String ok_rfid_1 = "e457b2a4";
+String ok_rfid_2 = "ec0bf79";
+
+//===============================================================
+// Funções RFID
+//===============================================================
+void dump_byte_array(byte *buffer, byte bufferSize) {
+  read_rfid = "";
+  for (byte i = 0; i < bufferSize; i++) {
+    read_rfid += String(buffer[i], HEX);
+  }
+}
+
+void open_lock() {
+  estado_sistema = !estado_sistema;
+  if (estado_sistema) Serial.println("Sistema liberado\n");
+  else Serial.println("Sistema bloqueado\n");
+}
+
+void leitura_rfid() {
+  if ((millis() - timer_rfid) > 1000) {
+    if (!mfrc522.PICC_IsNewCardPresent()) return;
+    if (!mfrc522.PICC_ReadCardSerial()) return;
+
+    dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
+    Serial.print("\nID do cartao (HEX): ");
+    Serial.println(read_rfid);
+
+    int idx = buscarUsuario(read_rfid);
+
+    if (idx == -1) {
+      cadastrarUsuario(read_rfid);
+    } else {
+      atualizarPresenca(idx);
+    }
+
+    timer_rfid = millis();
+  }
+}
+
+int buscarUsuario(String uid) {
+  for (int i = 0; i < supervisorio.validUsers; i++) {
+    if (supervisorio.users[i].UID == uid) return i;
+  }
+  return -1;
+}
+
+void cadastrarUsuario(String uid) {
+  if (supervisorio.validUsers >= 11) {
+    Serial.println("Limite maximo de usuarios atingido!");
+    return;
+  }
+  int idx = supervisorio.validUsers;
+  supervisorio.users[idx].ID = idx + 1;
+  supervisorio.users[idx].UID = uid;
+  supervisorio.users[idx].Nome = "Usuario " + String(idx + 1);
+  supervisorio.users[idx].Temperatura = 0;
+  supervisorio.users[idx].presente = true; // entra na sala
+  supervisorio.validUsers++;
+  supervisorio.presentUsers++;
+  Serial.println("Novo usuario cadastrado e marcado como presente!");
+}
+
+void atualizarPresenca(int indice) {
+  supervisorio.users[indice].presente = !supervisorio.users[indice].presente;
+  if (supervisorio.users[indice].presente)
+    supervisorio.presentUsers++;
+  else
+    supervisorio.presentUsers--;
+  
+  Serial.print("Usuario ");
+  Serial.print(supervisorio.users[indice].Nome);
+  Serial.print(" agora esta ");
+  Serial.println(supervisorio.users[indice].presente ? "PRESENTE" : "AUSENTE");
+}
+
+//===============================================================
 // Setup
-// =====================
+//===============================================================
 void setup() {
   Serial.begin(115200);
+  delay(500);
 
-  // Inicializa sensores e atuadores
-  ventilador.LinkIO(2);
-  lampada.LinkIO(4);
+  // Inicializa SPI do RFID
+  pinMode(SS_PIN, OUTPUT);
+  digitalWrite(SS_PIN, HIGH);
+  pinMode(RST_PIN, OUTPUT);
+  digitalWrite(RST_PIN, HIGH);
 
-  //SETA HISTERESE PADRÃO:
+  SPI.begin(SCK_RFID, MISO_RFID, MOSI_RFID, SS_PIN);
+  mfrc522.PCD_Init();
+  Serial.println("Sistema bloqueado. Aguardando cartao...\n");
+
+  // Inicializa pinos do MAX6675
+  pinMode(SCK_MAX, OUTPUT);
+  pinMode(CS_MAX, OUTPUT);
+  pinMode(SO_MAX, INPUT);
+
   histerese = 2;
 
-  // Inicializa supervisorio
   supervisorio.presentUsers = 0;
   supervisorio.operMode = 0;
   supervisorio.setpoint = Setpoint;
@@ -202,7 +205,6 @@ void setup() {
   supervisorio.manualFanCMD = false;
   supervisorio.manualCoolerCMD = false;
 
-  // Conecta no Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -212,108 +214,24 @@ void setup() {
   Serial.print("IP do ESP32: ");
   Serial.println(WiFi.localIP());
 
-  // Configura rotas
   server.on("/", handleRoot);
   server.on("/setpoint", handleSetpoint);
-
-  // Comandos WEB
-  server.on("/ligaFan", []() {
-    ventilador.Comando(true);
-    supervisorio.fanStatus = true;
-    supervisorio.manualFanCMD = true;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Ligou Fan");
-  });
-  server.on("/desligaFan", []() {
-    ventilador.Comando(false);
-    supervisorio.fanStatus = false;
-    supervisorio.manualFanCMD = false;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Desligou Fan");
-  });
-  server.on("/ligaHeat", []() {
-    lampada.Comando(true);
-    supervisorio.lampStatus = true;
-    supervisorio.manualCoolerCMD = true;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Ligou Lampada");
-  });
-  server.on("/desligaHeat", []() {
-    lampada.Comando(false);
-    supervisorio.lampStatus = false;
-    supervisorio.manualCoolerCMD = false;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Desligou Lampada");
-  });
-  server.on("/manual", []() {
-    Modo = 0;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Modo Manual");
-  });
-  server.on("/automatico", []() {
-    Modo = 1;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Modo Automatico");
-  });
-  server.on("/acesso", []() {
-    Modo = 2;
-    server.send(200, "text/html", htmlPage(supervisorio));
-    Serial.println("Modo Acesso");
-  });
-
   server.begin();
-
-  leitor.begin();
-  termopar.LinkIO(18, 32, 19);
 }
 
-// =====================
-// Loop principal
-// =====================
+//===============================================================
+// Loop
+//===============================================================
 void loop() {
+  leitura_rfid();
+
+  if (millis() - timer_temp > 10000) {
+    double tempC = thermocouple.readCelsius();
+    Serial.print("Temperatura: ");
+    Serial.print(tempC);
+    Serial.println(" °C");
+    timer_temp = millis();
+  }
+
   server.handleClient();
-
-  // Atualiza leitura
-  //extTemp = sensor.Leitura(); DESATIVADO POR TESTE
-  extTemp = 22;
-  supervisorio.temp = extTemp;
-  supervisorio.setpoint = Setpoint;
-  supervisorio.lampStatus = lampada.estado;
-  supervisorio.fanStatus = ventilador.estado;
-  supervisorio.operMode = Modo;
-
-  // Lógica de controle
-  if (Modo == 1) { // Automático
-    if (extTemp < (Setpoint - histerese)) {
-      lampada.Comando(true);
-      supervisorio.lampStatus = true;
-      ventilador.Comando(false);
-      supervisorio.fanStatus = false;
-    }
-    if (extTemp == Setpoint) {
-      lampada.Comando(false);
-      supervisorio.lampStatus = false;
-      ventilador.Comando(false);
-      supervisorio.fanStatus = false;
-    }
-    if (extTemp > (Setpoint + histerese)) {
-      lampada.Comando(false);
-      supervisorio.lampStatus = false;
-      ventilador.Comando(true);
-      supervisorio.fanStatus = true;
-    }
-  }
-
-  if (leitor.readCardUID()) {
-    unsigned long codigo = leitor.getCardCode();
-    Serial.print("Código numérico: ");
-    Serial.println(codigo);
-    delay(1000); // pequena pausa
-  }
-
-  // --- Leitura do MAX6675 ---
-  float temp = termopar.Leitura();
-  Serial.print("Temperatura: ");
-  Serial.print(temp);
-  Serial.println(" °C");
 }
