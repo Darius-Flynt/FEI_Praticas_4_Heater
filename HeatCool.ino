@@ -21,6 +21,28 @@ struct User {
   bool presente;
 };
 
+class Rele {
+  public:
+    bool estado;
+    int pino;
+
+    Rele(){
+      estado = false;
+      pino = 0;
+    }
+
+    void LinkIO(int pin){
+      pino = pin;
+      pinMode(pino, OUTPUT);
+      digitalWrite(pino, LOW);
+    }
+
+    void Comando(bool cmd){
+      estado = cmd;
+      digitalWrite(pino, estado ? HIGH : LOW);
+    }
+};
+
 struct Supervisorio {
   int presentUsers;
   int operMode;
@@ -43,6 +65,9 @@ float extTemp = 0;
 float Setpoint = 20;
 float histerese;
 int Modo;
+
+Rele ventilador;
+Rele lampada;
 
 WebServer server(80);
 Supervisorio supervisorio;
@@ -184,6 +209,8 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
+  ventilador.LinkIO(13);
+  lampada.LinkIO(32);
   pinMode(SS_PIN, OUTPUT);
   digitalWrite(SS_PIN, HIGH);
   pinMode(RST_PIN, OUTPUT);
@@ -220,6 +247,57 @@ void setup() {
   server.on("/", handleRoot);
   server.on("/setpoint", handleSetpoint);
   server.on("/checkUpdate", handleCheckUpdate);
+
+   // Configura rotas
+  server.on("/", handleRoot);
+  server.on("/setpoint", handleSetpoint);
+
+  // Comandos WEB
+  server.on("/ligaFan", []() {
+    ventilador.Comando(true);
+    supervisorio.fanStatus = true;
+    supervisorio.manualFanCMD = true;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Ligou Fan");
+  });
+  server.on("/desligaFan", []() {
+    ventilador.Comando(false);
+    supervisorio.fanStatus = false;
+    supervisorio.manualFanCMD = false;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Desligou Fan");
+  });
+  server.on("/ligaHeat", []() {
+    lampada.Comando(true);
+    supervisorio.lampStatus = true;
+    supervisorio.manualCoolerCMD = true;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Ligou Lampada");
+  });
+  server.on("/desligaHeat", []() {
+    lampada.Comando(false);
+    supervisorio.lampStatus = false;
+    supervisorio.manualCoolerCMD = false;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Desligou Lampada");
+  });
+  server.on("/manual", []() {
+    Modo = 0;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Modo Manual");
+  });
+  server.on("/automatico", []() {
+    Modo = 1;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Modo Automatico");
+  });
+  server.on("/acesso", []() {
+    Modo = 2;
+    server.send(200, "text/html", htmlPage(supervisorio));
+    Serial.println("Modo Acesso");
+  });
+
+
   server.begin();
 }
 
@@ -236,9 +314,30 @@ void loop() {
     Serial.println(" °C");
     timer_temp = millis();
     supervisorio.temp = tempC;
+    extTemp = tempC;
   }
-
   
+    // Lógica de controle
+  if (Modo == 1) { // Automático
+    if (extTemp < (Setpoint - histerese)) {
+      lampada.Comando(true);
+      supervisorio.lampStatus = true;
+      ventilador.Comando(false);
+      supervisorio.fanStatus = false;
+    }
+    if (extTemp == Setpoint) {
+      lampada.Comando(false);
+      supervisorio.lampStatus = false;
+      ventilador.Comando(false);
+      supervisorio.fanStatus = false;
+    }
+    if (extTemp > (Setpoint + histerese)) {
+      lampada.Comando(false);
+      supervisorio.lampStatus = false;
+      ventilador.Comando(true);
+      supervisorio.fanStatus = true;
+    }
+  }
 
   server.handleClient();
 }
