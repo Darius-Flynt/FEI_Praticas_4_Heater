@@ -266,7 +266,17 @@ String htmlPage(Supervisorio &sup) {
 
   for (int i = 0; i < sup.validUsers; i++) {
     html += "<div class='user-card'>";
+    html += "<div style='display:flex; align-items:center; justify-content:space-between;'>";
     html += "<label for='name" + String(i) + "'>Nome:</label>";
+
+    // Bolinha de status
+    if (sup.users[i].presente) {
+      html += "<span style='display:inline-block; width:12px; height:12px; border-radius:50%; background-color:green; margin-left:8px;'></span>";
+    } else {
+      html += "<span style='display:inline-block; width:12px; height:12px; border-radius:50%; background-color:red; margin-left:8px;'></span>";
+    }
+    html += "</div>";
+
     html += "<input type='text' id='name" + String(i) + "' name='name" + String(i) + "' value='" + sup.users[i].Nome + "'>";
     html += "<label for='spUser" + String(i) + "'>Setpoint:</label>";
     html += "<input type='number' id='spUser" + String(i) + "' name='spUser" + String(i) + "' step='0.1' value='" + String(sup.users[i].Temperatura, 1) + "'>";
@@ -275,7 +285,25 @@ String htmlPage(Supervisorio &sup) {
   }
 
   html += "<input type='submit' value='Atualizar Usuários'>";
-  html += "</form></div></div></body></html>";
+  html += "</form></div></div>";
+
+  // 🔁 SCRIPT AUTO-RELOAD (checa /checkUpdate; só recarrega quando ESP sinalizar)
+  html += R"rawliteral(
+<script>
+setInterval(() => {
+  fetch('/checkUpdate')
+    .then(res => res.text())
+    .then(t => {
+      if (t === 'reload') location.reload();
+    })
+    .catch(err => {
+      // ignora erros de conexão breves
+      // console.log('checkUpdate err', err);
+    });
+}, 1000); // verifica a cada 1 segundo
+</script>
+</body></html>
+)rawliteral";
 
   return html;
 }

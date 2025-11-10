@@ -6,19 +6,19 @@
 #include <MFRC522DriverSPI.h>
 #include <MFRC522DriverPinSimple.h>
 #include <max6675.h>
-
-//WEBSERVER
 #include <WiFi.h>
 #include <WebServer.h>
 
-//Estrutura de dados comunicação Supervisório WEB SERVER
+//---------------------------------------------------------------
+// Estruturas de dados
+//---------------------------------------------------------------
 struct User {
   int ID;
   float Temperatura;
   String Nome;
   int RFID;
-  String UID; 
-  bool presente; 
+  String UID;
+  bool presente;
 };
 
 struct Supervisorio {
@@ -35,6 +35,7 @@ struct Supervisorio {
   int validUsers = 0;
 };
 
+//---------------------------------------------------------------
 const char* ssid = "A56 de João Vitor";
 const char* password = "leme1234";
 
@@ -45,9 +46,13 @@ int Modo;
 
 WebServer server(80);
 Supervisorio supervisorio;
+bool precisaRecarregar = false; // <-- flag para reload automático
 
 #include "WebPage.h"
 
+//---------------------------------------------------------------
+// HANDLERS
+//---------------------------------------------------------------
 void handleRoot() {
   server.send(200, "text/html", htmlPage(supervisorio));
 }
@@ -62,33 +67,39 @@ void handleSetpoint() {
   server.send(200, "text/html", htmlPage(supervisorio));
 }
 
+void handleCheckUpdate() {
+  if (precisaRecarregar) {
+    precisaRecarregar = false;
+    server.send(200, "text/plain", "reload");
+  } else {
+    server.send(200, "text/plain", "ok");
+  }
+}
 
-
-// -----------------------------
+//---------------------------------------------------------------
 // Pinos RFID (SPI principal)
-// -----------------------------
-#define SS_PIN   21
+//---------------------------------------------------------------
+#define SS_PIN   5
 #define RST_PIN  2
 #define SCK_RFID 17
 #define MISO_RFID 4
 #define MOSI_RFID 16
 
-// -----------------------------
+//---------------------------------------------------------------
 // Pinos MAX6675 (SPI secundário)
-// -----------------------------
-#define SCK_MAX 23
+//---------------------------------------------------------------
+#define SCK_MAX 18
 #define CS_MAX  19
-#define SO_MAX  18
+#define SO_MAX  23
 
-// -----------------------------
-// Objetos e variáveis
-// -----------------------------
+//---------------------------------------------------------------
+// Objetos
+//---------------------------------------------------------------
 MFRC522DriverPinSimple ss_pin(SS_PIN);
 SPIClass &spiRFID = SPI;
 const SPISettings spiSettings = SPISettings(SPI_CLOCK_DIV4, MSBFIRST, SPI_MODE0);
 MFRC522DriverSPI driver{ss_pin, spiRFID, spiSettings};
 MFRC522 mfrc522{driver};
-
 MAX6675 thermocouple(SCK_MAX, CS_MAX, SO_MAX);
 
 int estado_sistema = LOW;
@@ -96,23 +107,14 @@ unsigned long timer_rfid = 0;
 unsigned long timer_temp = 0;
 String read_rfid;
 
-String ok_rfid_1 = "e457b2a4";
-String ok_rfid_2 = "ec0bf79";
-
-//===============================================================
+//---------------------------------------------------------------
 // Funções RFID
-//===============================================================
+//---------------------------------------------------------------
 void dump_byte_array(byte *buffer, byte bufferSize) {
   read_rfid = "";
   for (byte i = 0; i < bufferSize; i++) {
     read_rfid += String(buffer[i], HEX);
   }
-}
-
-void open_lock() {
-  estado_sistema = !estado_sistema;
-  if (estado_sistema) Serial.println("Sistema liberado\n");
-  else Serial.println("Sistema bloqueado\n");
 }
 
 void leitura_rfid() {
@@ -153,9 +155,10 @@ void cadastrarUsuario(String uid) {
   supervisorio.users[idx].UID = uid;
   supervisorio.users[idx].Nome = "Usuario " + String(idx + 1);
   supervisorio.users[idx].Temperatura = 0;
-  supervisorio.users[idx].presente = true; // entra na sala
+  supervisorio.users[idx].presente = true;
   supervisorio.validUsers++;
   supervisorio.presentUsers++;
+  precisaRecarregar = true;  // <- avisa o navegador
   Serial.println("Novo usuario cadastrado e marcado como presente!");
 }
 
@@ -165,21 +168,22 @@ void atualizarPresenca(int indice) {
     supervisorio.presentUsers++;
   else
     supervisorio.presentUsers--;
-  
+
+  precisaRecarregar = true; // <- avisa o navegador que deve recarregar
+
   Serial.print("Usuario ");
   Serial.print(supervisorio.users[indice].Nome);
   Serial.print(" agora esta ");
   Serial.println(supervisorio.users[indice].presente ? "PRESENTE" : "AUSENTE");
 }
 
-//===============================================================
+//---------------------------------------------------------------
 // Setup
-//===============================================================
+//---------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
   delay(500);
 
-  // Inicializa SPI do RFID
   pinMode(SS_PIN, OUTPUT);
   digitalWrite(SS_PIN, HIGH);
   pinMode(RST_PIN, OUTPUT);
@@ -189,7 +193,6 @@ void setup() {
   mfrc522.PCD_Init();
   Serial.println("Sistema bloqueado. Aguardando cartao...\n");
 
-  // Inicializa pinos do MAX6675
   pinMode(SCK_MAX, OUTPUT);
   pinMode(CS_MAX, OUTPUT);
   pinMode(SO_MAX, INPUT);
@@ -216,12 +219,13 @@ void setup() {
 
   server.on("/", handleRoot);
   server.on("/setpoint", handleSetpoint);
+  server.on("/checkUpdate", handleCheckUpdate);
   server.begin();
 }
 
-//===============================================================
+//---------------------------------------------------------------
 // Loop
-//===============================================================
+//---------------------------------------------------------------
 void loop() {
   leitura_rfid();
 
@@ -231,7 +235,10 @@ void loop() {
     Serial.print(tempC);
     Serial.println(" °C");
     timer_temp = millis();
+    supervisorio.temp = tempC;
   }
+
+  
 
   server.handleClient();
 }
