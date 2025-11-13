@@ -9,6 +9,41 @@
 #include <WiFi.h>
 #include <WebServer.h>
 
+//===============================================================
+// Display OLED - ESP32
+//===============================================================
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_RESET -1
+#define SCREEN_ADDRESS 0x3C  // endereço detectado
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+//===============================================================
+// Variáveis Display e botão
+//===============================================================
+int pinoBotao = 33; // Botão no GPIO 33
+int telaAtual = 0;
+bool botaoAnterior = HIGH;
+unsigned long ultimoUpdateLCD = 0;
+
+void MOSTRA_LCD(String valor, String frase) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(frase);
+  display.setCursor(0, 20);
+  display.print("Valor: ");
+  display.println(valor);
+
+  display.display();
+  delay(10);
+}
+
 //---------------------------------------------------------------
 // Estruturas de dados
 //---------------------------------------------------------------
@@ -132,6 +167,28 @@ unsigned long timer_rfid = 0;
 unsigned long timer_temp = 0;
 String read_rfid;
 
+unsigned long tempoleitura = millis();
+
+const int pino_sct = 33;  // Pino Analogico ADC
+double CorrenteRms = 0;
+unsigned long tempoatual;
+float corrente = 0;
+float correnteRMS=0;
+float correnteMax = 0;
+float correnteMin = 0;
+
+int rede = 127; // Tensao da rede eletrica
+double UltimoS = 0;
+float energia=0;
+unsigned long tempoanterior;
+unsigned long deltat;
+
+float CorrenteRmsMedia = 0;
+float UltimoCorrenteRmsMedia = 0;
+int nMed_Irms = 0;
+double Ativa = 0;
+unsigned long timer_Irms = millis();
+
 //---------------------------------------------------------------
 // Funções RFID
 //---------------------------------------------------------------
@@ -209,8 +266,8 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  ventilador.LinkIO(13);
-  lampada.LinkIO(32);
+  ventilador.LinkIO(32);
+  lampada.LinkIO(13);
   pinMode(SS_PIN, OUTPUT);
   digitalWrite(SS_PIN, HIGH);
   pinMode(RST_PIN, OUTPUT);
@@ -224,7 +281,7 @@ void setup() {
   pinMode(CS_MAX, OUTPUT);
   pinMode(SO_MAX, INPUT);
 
-  histerese = 2;
+  histerese = 1;
 
   supervisorio.presentUsers = 0;
   supervisorio.operMode = 0;
@@ -293,12 +350,150 @@ void setup() {
   });
   server.on("/acesso", []() {
     Modo = 2;
+    //teste
+    if (Modo == 2) { // Acesso
+    float somaTemperaturas = 0.0;
+    int totalPresentes = 0;
+
+    for (int i = 0; i < 10; i++) {
+      if (supervisorio.users[i].presente) {
+        somaTemperaturas += supervisorio.users[i].Temperatura;
+        totalPresentes++;
+      }
+    }
+
+    float mediaTemperatura = 0.0;
+    if (totalPresentes > 0) {
+      mediaTemperatura = somaTemperaturas / totalPresentes;
+    }
+
+    // Exemplo de uso:
+    Setpoint = mediaTemperatura;
+    supervisorio.setpoint = mediaTemperatura;
+    }
     server.send(200, "text/html", htmlPage(supervisorio));
     Serial.println("Modo Acesso");
   });
 
+  server.on("/updateUser", []() {
+  for (int i = 0; i < supervisorio.validUsers; i++) {
+    String nomeCampo = "name" + String(i);
+    String spCampo = "spUser" + String(i);
+
+    if (server.hasArg(nomeCampo)) {
+      supervisorio.users[i].Nome = server.arg(nomeCampo);
+    }
+    if (server.hasArg(spCampo)) {
+      supervisorio.users[i].Temperatura = server.arg(spCampo).toFloat();
+    }
+  }
+
+  precisaRecarregar = true;  // força reload no navegador
+  server.send(200, "text/html", htmlPage(supervisorio));
+
+  Serial.println("=== Usuários atualizados ===");
+  for (int i = 0; i < supervisorio.validUsers; i++) {
+    Serial.print("User ");
+    Serial.print(i);
+    Serial.print(" -> Nome: ");
+    Serial.print(supervisorio.users[i].Nome);
+    Serial.print(" | SP: ");
+    Serial.println(supervisorio.users[i].Temperatura, 1);
+  }
+});
+
 
   server.begin();
+
+  //===============================================================
+  // Inicialização do OLED e botão
+  //===============================================================
+  Wire.begin(21, 22);
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println("Falha ao inicializar o display OLED!");
+    while (1);
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 10);
+  display.println("Iniciando...");
+  display.display();
+
+  pinMode(pinoBotao, INPUT_PULLUP);
+  MOSTRA_LCD(String(Setpoint, 1), "Sistema Pronto");
+  delay(1000);
+
+}
+
+float Irms() {
+  // Leitura da Corrente
+  float soma = 0;
+  float nMedio = 0;
+  float amostras[1000]; 
+  float produto[1000]; 
+
+  // Leitura de 1 periodo
+  int i = 1;
+  tempoatual = micros();
+  while(micros() - tempoatual < 16667) {
+    //corrente = ((analogRead(pino_sct) - 2048.0) / 4096.0 * 3.3 / 10.0 / 20.0 * 2000.0); // SCT013 100A:50mA, R = 20 Ohm e 10 voltas de fio
+    //corrente = ((analogRead(pino_sct) - 2048.0) / 4096.0 * 3.3 / 20.0 * 2000.0);        // SCT013 100A:50mA, R = 20 Ohm e fio sem voltas
+      corrente = (((analogRead(pino_sct) - 2048.0) / 4096.0) * 3.3 * 20.0);                 // SCT013 20A/1V, sem resistor e fio sem voltas
+    //corrente = ((analogRead(pino_sct) - 2048.0) / 4096.0 * 3.3 * 30.0);                 // SCT013 30A/1V, sem resistor e fio sem voltas
+    //corrente = ((analogRead(pino_sct) - 2048.0) / 4096.0 * 3.3 * 05.0);                 // SCT013 5A/1V, sem resistor e fio sem voltas
+    amostras[i] = corrente;
+    i++;
+  }
+
+  // Calcula o nivel medio
+  correnteMax = -100.0;
+  correnteMin = 100.0;
+  for(int n = 1; n < i; n++) {
+    if(amostras[n] > correnteMax) {
+      correnteMax = amostras[n];
+    }
+    if(amostras[n] < correnteMin) {
+      correnteMin = amostras[n];
+    }
+  }
+  nMedio = (correnteMin + correnteMax) / 2.0;
+
+  // Remove o nivel medio e faz o somatorio das amostras ao quadrado
+  for(int n = 1; n < i; n++) {
+    //amostras[n] = amostras[n] - nMedio; // Remove nivel medio
+    produto[n] = amostras[n] * amostras[n];
+    soma += produto[n];
+  }
+
+  // Calcula a media dos valores
+  correnteRMS = soma / (i-1);
+  // Calcula a raiz quadrada
+  correnteRMS = sqrt(correnteRMS);
+
+  // Calculo da potAparente em kVA
+  UltimoS = correnteRMS * rede / 1000.0; 
+
+  // Calcula a potencia em kW considerando FP = 0.8
+  Ativa = UltimoS * 0.8;
+
+  // Calcula o consumo de energia em kWh
+  tempoatual = millis();
+  deltat = tempoatual - tempoanterior;
+  tempoanterior = tempoatual;
+  energia += (Ativa * deltat) / 3600.0 / 1000.0;
+  
+  Serial.print("Corrente RMS (A): ");
+  Serial.print(correnteRMS,3);
+  Serial.print("\tPotencia Aparente (kVA): ");
+  Serial.print(UltimoS,3);
+  Serial.print("\tPotencia Ativa (FP=0.8 - kW): ");
+  Serial.print(Ativa,3);
+  Serial.print("\tConsumo de Energia (FP=0.8 - kWh): ");
+  Serial.print(energia,6);
+  Serial.println("");
+  return correnteRMS;
+  
 }
 
 //---------------------------------------------------------------
@@ -307,7 +502,7 @@ void setup() {
 void loop() {
   leitura_rfid();
 
-  if (millis() - timer_temp > 10000) {
+  if (millis() - timer_temp > 3000) {
     double tempC = thermocouple.readCelsius();
     Serial.print("Temperatura: ");
     Serial.print(tempC);
@@ -325,9 +520,11 @@ void loop() {
       ventilador.Comando(false);
       supervisorio.fanStatus = false;
     }
-    if (extTemp == Setpoint) {
+    if (lampada.estado == true and extTemp > Setpoint ) {
       lampada.Comando(false);
       supervisorio.lampStatus = false;
+    }
+    if (ventilador.estado == true and extTemp < Setpoint ) {
       ventilador.Comando(false);
       supervisorio.fanStatus = false;
     }
@@ -338,6 +535,104 @@ void loop() {
       supervisorio.fanStatus = true;
     }
   }
+  if (Modo == 2) { // Acesso
+    float somaTemperaturas = 0.0;
+    int totalPresentes = 0;
+
+    for (int i = 0; i < 10; i++) {
+      if (supervisorio.users[i].presente) {
+        somaTemperaturas += supervisorio.users[i].Temperatura;
+        totalPresentes++;
+      }
+    }
+
+    float mediaTemperatura = 0.0;
+    if (totalPresentes > 0) {
+      mediaTemperatura = somaTemperaturas / totalPresentes;
+    }
+
+    // Exemplo de uso:
+    Setpoint = mediaTemperatura;
+    supervisorio.setpoint = mediaTemperatura;
+
+    if(totalPresentes != 0){
+      if (extTemp < (Setpoint - histerese)) {
+        lampada.Comando(true);
+        supervisorio.lampStatus = true;
+        ventilador.Comando(false);
+        supervisorio.fanStatus = false;
+      }
+      if (lampada.estado == true and extTemp > Setpoint ) {
+        lampada.Comando(false);
+        supervisorio.lampStatus = false;
+      }
+      if (ventilador.estado == true and extTemp < Setpoint ) {
+        ventilador.Comando(false);
+        supervisorio.fanStatus = false;
+      }
+      if (extTemp > (Setpoint + histerese)) {
+        lampada.Comando(false);
+        supervisorio.lampStatus = false;
+        ventilador.Comando(true);
+        supervisorio.fanStatus = true;
+      }
+    } else {
+        lampada.Comando(false);
+        supervisorio.lampStatus = false;
+        ventilador.Comando(false);
+        supervisorio.fanStatus = false;
+    }
+    
+  }
+  
+
+  //LEITURA SENSOR CORRENTE
+  if((millis() - tempoleitura) > 500) {
+    Irms();
+    tempoleitura = millis();
+  }
 
   server.handleClient();
+
+  //inclusao oled
+  // Alternância de tela via botão
+  bool botaoEstado = digitalRead(pinoBotao);
+  if (botaoAnterior == HIGH && botaoEstado == LOW) {
+    telaAtual = !telaAtual;
+  }
+  botaoAnterior = botaoEstado;
+
+  // Atualização do OLED
+  if (millis() - ultimoUpdateLCD > 1000) {
+    ultimoUpdateLCD = millis();
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setTextColor(SSD1306_WHITE);
+
+    if (telaAtual == 0) {
+      display.setCursor(0, 0);
+      display.println("Corrente RMS:");
+      display.setCursor(0, 20);
+      display.print(correnteRMS, 2);
+      display.println(" A");
+    } else {
+      display.setCursor(0, 0);
+      display.print("Temp: ");
+      display.print(extTemp, 1);
+      display.println(" C");
+      display.setCursor(0, 20);
+      display.print("SP: ");
+      display.print(Setpoint, 1);
+      display.println(" C");
+    }
+
+    // === Mostra o IP do ESP32 na última linha ===
+    display.setTextSize(1);
+    display.setCursor(0, 56);  // linha inferior (para OLED 128x64)
+    display.print("IP: ");
+    display.print(WiFi.localIP());
+
+    display.display();
+  }
+  
 }
