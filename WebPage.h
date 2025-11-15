@@ -287,7 +287,7 @@ String htmlPage(Supervisorio &sup) {
   html += "<input type='submit' value='Atualizar Usuários'>";
   html += "</form></div></div>";
 
-  // 🔁 SCRIPT AUTO-RELOAD (checa /checkUpdate; só recarrega quando ESP sinalizar)
+  // Reload Automatico
   html += R"rawliteral(
 <script>
 setInterval(() => {

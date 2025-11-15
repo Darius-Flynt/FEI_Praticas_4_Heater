@@ -1,11 +1,20 @@
 //===============================================================
-// RFID (MFRC522) + Sensor de Temperatura (MAX6675) - ESP32
+// RFID (MFRC522)
 //===============================================================
 #include <SPI.h>
 #include <MFRC522v2.h>
 #include <MFRC522DriverSPI.h>
 #include <MFRC522DriverPinSimple.h>
+
+
+//===============================================================
+// Sensor de Temperatura (MAX6675)
+//===============================================================
 #include <max6675.h>
+
+//===============================================================
+// WIFI
+//===============================================================
 #include <WiFi.h>
 #include <WebServer.h>
 
@@ -25,7 +34,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 //===============================================================
 // Variáveis Display e botão
 //===============================================================
-int pinoBotao = 33; // Botão no GPIO 33
+int pinoBotao = 14; // Botão no GPIO 14
 int telaAtual = 0;
 bool botaoAnterior = HIGH;
 unsigned long ultimoUpdateLCD = 0;
@@ -92,7 +101,7 @@ struct Supervisorio {
   int validUsers = 0;
 };
 
-//---------------------------------------------------------------
+//Conexão WIFI---------------------------------------------------------------
 const char* ssid = "A56 de João Vitor";
 const char* password = "leme1234";
 
@@ -106,7 +115,7 @@ Rele lampada;
 
 WebServer server(80);
 Supervisorio supervisorio;
-bool precisaRecarregar = false; // <-- flag para reload automático
+bool precisaRecarregar = false; // <-- flag para reload automático no Client WEB
 
 #include "WebPage.h"
 
@@ -551,7 +560,7 @@ void loop() {
       mediaTemperatura = somaTemperaturas / totalPresentes;
     }
 
-    // Exemplo de uso:
+    // calcula media da temperatura dos usuarios presentes:
     Setpoint = mediaTemperatura;
     supervisorio.setpoint = mediaTemperatura;
 
@@ -628,7 +637,7 @@ void loop() {
 
     // === Mostra o IP do ESP32 na última linha ===
     display.setTextSize(1);
-    display.setCursor(0, 56);  // linha inferior (para OLED 128x64)
+    display.setCursor(0, 56);  
     display.print("IP: ");
     display.print(WiFi.localIP());
 
